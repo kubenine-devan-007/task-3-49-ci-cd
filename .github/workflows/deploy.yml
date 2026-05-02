@@ -14,35 +14,35 @@ jobs:
       contents: read
 
     steps:
-      # 1. Checkout
+      # 1. Checkout code
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # 2. Login Docker Hub
+      # 2. Login to Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v2
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # 3. Build image with UNIQUE tag
+      # 3. Build Docker image with unique tag
       - name: Build Docker image
         run: |
           docker build -t devan221/task-3-49-app:${{ github.sha }} .
 
-      # 4. Push image
+      # 4. Push Docker image
       - name: Push Docker image
         run: |
           docker push devan221/task-3-49-app:${{ github.sha }}
 
-      # 5. Configure AWS (OIDC)
+      # 5. Configure AWS credentials (OIDC)
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::138720667646:role/task-3-49-github-actions-role
           aws-region: ap-south-1
 
-      # 6. Update Task Definition with new image
+      # 6. Register new task definition with updated image
       - name: Register new task definition
         run: |
           IMAGE=devan221/task-3-49-app:${{ github.sha }}
@@ -61,10 +61,17 @@ jobs:
           aws ecs register-task-definition \
             --cli-input-json file://new-task-def.json
 
-      # 7. Deploy new revision
-      - name: Update ECS service
+      # 7. Update ECS service to use NEW revision (CRITICAL FIX)
+      - name: Update ECS service with new task definition
         run: |
+          NEW_REVISION=$(aws ecs list-task-definitions \
+            --family-prefix task-3-49-task \
+            --sort DESC \
+            --max-items 1 \
+            --query 'taskDefinitionArns[0]' \
+            --output text)
+
           aws ecs update-service \
             --cluster task-3-49-cluster \
             --service task-3-49-service \
-            --force-new-deployment
+            --task-definition $NEW_REVISION
