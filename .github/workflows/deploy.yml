@@ -14,7 +14,7 @@ jobs:
       contents: read
 
     steps:
-      # 1. Checkout
+      # 1. Checkout code
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -42,8 +42,9 @@ jobs:
           role-to-assume: arn:aws:iam::138720667646:role/task-3-49-github-actions-role
           aws-region: ap-south-1
 
-      # 6. Register new task definition (update image only)
+      # 6. Register new task definition with new image
       - name: Register new task definition
+        id: register
         run: |
           IMAGE=devan221/task-3-49-app:${{ github.sha }}
 
@@ -53,16 +54,44 @@ jobs:
 
           jq --arg IMAGE "$IMAGE" '
             .containerDefinitions[0].image = $IMAGE
-            | del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)
+            | del(
+                .taskDefinitionArn,
+                .revision,
+                .status,
+                .requiresAttributes,
+                .compatibilities,
+                .registeredAt,
+                .registeredBy
+              )
           ' task-def.json > new-task-def.json
 
           aws ecs register-task-definition \
             --cli-input-json file://new-task-def.json
 
-      # 7. Deploy (NO fragile parsing)
-      - name: Force ECS deployment
+      # 7. Get latest revision (clean, no "None" issue)
+      - name: Get latest task definition
+        id: taskdef
+        run: |
+          NEW_REVISION=$(aws ecs list-task-definitions \
+            --family-prefix task-3-49-task \
+            --sort DESC \
+            --max-items 1 \
+            --query "taskDefinitionArns[0]" \
+            --output text | head -n 1)
+
+          echo "Latest revision: $NEW_REVISION"
+
+          if [ -z "$NEW_REVISION" ] || [ "$NEW_REVISION" = "None" ]; then
+            echo "Failed to fetch revision"
+            exit 1
+          fi
+
+          echo "TASK_DEF=$NEW_REVISION" >> $GITHUB_ENV
+
+      # 8. Update ECS service to NEW revision (this is the missing piece)
+      - name: Update ECS service
         run: |
           aws ecs update-service \
             --cluster task-3-49-cluster \
             --service task-3-49-service \
-            --force-new-deployment
+            --task-definition "$TASK_DEF"
